@@ -177,8 +177,8 @@ typedef BOOL(*EXPORTFUNC)(LPVOID, DWORD);
 // Rather, I will pass a linker option of "/ENTRY:ExecutePayload" in order to get around this issue.
 ULONG_PTR ExecutePayload(ULONG_PTR uiLibraryAddress, DWORD dwFunctionHash, LPVOID lpUserData, DWORD nUserdataLen)
 {
-	#pragma warning( push )
-	#pragma warning( disable : 4055 ) // Ignore cast warnings
+#pragma warning( push )
+#pragma warning( disable : 4055 ) // Ignore cast warnings
 
 	// the functions we need
 	LOADLIBRARYA pLoadLibraryA = NULL;
@@ -225,7 +225,7 @@ ULONG_PTR ExecutePayload(ULONG_PTR uiLibraryAddress, DWORD dwFunctionHash, LPVOI
 	pExitThread = (EXITTHREAD)GetProcAddressWithHash(0xa2a1de0);
 	pNtFlushInstructionCache = (NTFLUSHINSTRUCTIONCACHE)GetProcAddressWithHash(0x945cb1af);
 
-	
+
 	// STEP 2: load our image into a new permanent location in memory...
 
 	// get the VA of the NT Header for the PE to be loaded
@@ -233,18 +233,18 @@ ULONG_PTR ExecutePayload(ULONG_PTR uiLibraryAddress, DWORD dwFunctionHash, LPVOI
 
 	// allocate all the memory for the DLL to be loaded into. we can load at any address because we will  
 	// relocate the image. Also zeros all memory and marks it as READ, WRITE and EXECUTE to avoid any problems.
-	uiBaseAddress = (ULONG_PTR)pVirtualAlloc(NULL, ((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader.SizeOfImage, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+	uiBaseAddress = (ULONG_PTR)pVirtualAlloc((LPVOID)NULL, ((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader.SizeOfImage, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 
 	// we must now copy over the headers
 	uiValueA = ((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader.SizeOfHeaders;
 	uiValueB = uiLibraryAddress;
 	uiValueC = uiBaseAddress;
-	
+
 	while (uiValueA--)
 		*(BYTE *)uiValueC++ = *(BYTE *)uiValueB++;
 
 	// STEP 3: load in all of our sections...
-	
+
 	// uiValueA = the VA of the first section
 	uiValueA = ((ULONG_PTR)&((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader + ((PIMAGE_NT_HEADERS)uiHeaderValue)->FileHeader.SizeOfOptionalHeader);
 
@@ -267,7 +267,7 @@ ULONG_PTR ExecutePayload(ULONG_PTR uiLibraryAddress, DWORD dwFunctionHash, LPVOI
 		// get the VA of the next section
 		uiValueA += sizeof(IMAGE_SECTION_HEADER);
 	}
-	
+
 	// STEP 4: process our images import table...
 
 	// uiValueB = the address of the import directory
@@ -288,18 +288,17 @@ ULONG_PTR ExecutePayload(ULONG_PTR uiLibraryAddress, DWORD dwFunctionHash, LPVOI
 
 		// uiValueA = VA of the IAT (via first thunk not origionalfirstthunk)
 		uiValueA = (uiBaseAddress + ((PIMAGE_IMPORT_DESCRIPTOR)uiValueC)->FirstThunk);
-		
+
 		// itterate through all imported functions, importing by ordinal if no name present
 		while (DEREF(uiValueA))
 		{
-			
 			// sanity check uiValueD as some compilers only import by FirstThunk
 			if (((PIMAGE_THUNK_DATA)uiValueD)->u1.Ordinal && uiValueD && ((PIMAGE_THUNK_DATA)uiValueD)->u1.Ordinal & IMAGE_ORDINAL_FLAG)
 			{
 
 				// get the VA of the modules NT Header
 				uiExportDir = uiLibraryAddress + ((PIMAGE_DOS_HEADER)uiLibraryAddress)->e_lfanew;
-				
+
 				// uiNameArray = the address of the modules export directory entry
 				uiNameArray = (ULONG_PTR)&((PIMAGE_NT_HEADERS)uiExportDir)->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
 
@@ -317,14 +316,13 @@ ULONG_PTR ExecutePayload(ULONG_PTR uiLibraryAddress, DWORD dwFunctionHash, LPVOI
 			}
 			else
 			{
-				
 				// get the VA of this functions import by name struct
 				uiValueB = (uiBaseAddress + DEREF(uiValueA));
 
 				// use GetProcAddress and patch in the address for this imported function
 				DEREF(uiValueA) = (ULONG_PTR)pGetProcAddress((HMODULE)uiLibraryAddress, (LPCSTR)((PIMAGE_IMPORT_BY_NAME)uiValueB)->Name);
 			}
-			
+
 			// get the next imported function
 			uiValueA += sizeof(ULONG_PTR);
 			if (uiValueD)
@@ -333,6 +331,40 @@ ULONG_PTR ExecutePayload(ULONG_PTR uiLibraryAddress, DWORD dwFunctionHash, LPVOI
 
 		// get the next import
 		uiValueC += sizeof(IMAGE_IMPORT_DESCRIPTOR);
+	}
+
+	// uiValueB = the address of the import directory
+	uiValueB = (ULONG_PTR)&((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT];
+
+	if (uiValueB && ((PIMAGE_DATA_DIRECTORY)uiValueB)->VirtualAddress!=0)
+	{
+		// we assume their is an import table to process
+		// uiValueC is the first entry in the import table
+		uiValueC = (uiBaseAddress + ((PIMAGE_DATA_DIRECTORY)uiValueB)->VirtualAddress);
+		// itterate through all imports
+		while (((PIMAGE_DELAYLOAD_DESCRIPTOR)uiValueC)->DllNameRVA)
+		{
+			uiLibraryAddress = (ULONG_PTR)pLoadLibraryA((LPCSTR)(uiBaseAddress + ((PIMAGE_DELAYLOAD_DESCRIPTOR)uiValueC)->DllNameRVA));
+
+			// uiValueA = VA of the IAT (via first thunk not origionalfirstthunk)
+			uiValueA = (uiBaseAddress + ((PIMAGE_DELAYLOAD_DESCRIPTOR)uiValueC)->ImportNameTableRVA);
+			uiValueD = (uiBaseAddress + ((PIMAGE_DELAYLOAD_DESCRIPTOR)uiValueC)->ImportAddressTableRVA);
+
+			// itterate through all imported functions, importing by ordinal if no name present
+			while (DEREF(uiValueA))
+			{
+				uiValueB = (uiBaseAddress + DEREF(uiValueA));
+				DEREF(uiValueD) = (ULONG_PTR)pGetProcAddress((HMODULE)uiLibraryAddress, (LPCSTR)((PIMAGE_IMPORT_BY_NAME)uiValueB)->Name) - uiBaseAddress + 0x00400000;
+
+				// get the next imported function
+				uiValueA += sizeof(ULONG_PTR);
+				if (uiValueD)
+					uiValueD += sizeof(ULONG_PTR);
+			}
+
+			// get the next delay import
+			uiValueC += sizeof(IMAGE_DELAYLOAD_DESCRIPTOR);
+		}
 	}
 	
 	// STEP 5: process all of our images relocations...
