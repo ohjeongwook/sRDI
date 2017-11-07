@@ -318,7 +318,7 @@ int main(int argc, char *argv[], char *envp[])
 	if (data[0] == 'M' && data[1] == 'Z') {
 		printf("\n[+] File is a DLL, attempting to convert");
 
-		if (!ConvertToShellcode(data, dataSize, HashFunctionName("SayHello"), 0, 0, finalShellcode, finalSize)) {
+		if (!ConvertToShellcode(data, dataSize, 0, 0, 0, finalShellcode, finalSize)) {
 			printf("\n[!] Failed to convert DLL");
 			return 0;
 		}
